@@ -27,14 +27,16 @@ npm start
 3. Open the app in your browser:
 
 ```text
-http://localhost:3000/#staff
+http://localhost:3000/
 ```
 
 4. To access from another device on the same network, use your machine IP:
 
 ```text
-http://<your-machine-ip>:3000/#staff
+http://<your-machine-ip>:3000/
 ```
+
+> The app does not require a custom path rewrite; use the root URL for local and deployed access.
 
 > The shared server stores data in `data/` JSON files. Keep the server running for all clients to stay in sync.
 
