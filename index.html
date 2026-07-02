@@ -1300,22 +1300,9 @@ function customizePanel(){
     }
     booking.status = "completed";
     booking.kgFilled = kg;
-    booking.complet    cd "c:\Users\HP\OneDrive - Hydrogen Systems\Desktop\H2 Drive Web App"
-    git init
-    git add .
-    git commit -m "Initial HRS booking portal"    cd "c:\Users\HP\OneDrive - Hydrogen Systems\Desktop\H2 Drive Web App"
-    git init
-    git add .
-    git commit -m "Initial commit"
-    git remote add origin https://github.com/omanshell0-cmyk/HRS-Booking-Shell.git
-    git branch -M main
-    git push -u origin main    cd "c:\Users\HP\OneDrive - Hydrogen Systems\Desktop\H2 Drive Web App"
-    git init
-    git add .
-    git commit -m "Initial commit"
-    git remote add origin https://github.com/omanshell0-cmyk/HRS-Booking-Shell.git
-    git branch -M main
-    git push -u origin mainedAt = new Date().toISOString();
+    booking.completedAt = new Date().toISOString();
+    booking.history = booking.history || [];
+    booking.history.push({ action:"completed", kgFilled:kg, at:booking.completedAt });
     booking.history = booking.history || [];
     booking.history.push({ action:"completed", kgFilled:kg, at:booking.completedAt });
     saveBookings(bookings);
@@ -1345,13 +1332,9 @@ function csvCell(v){
 function escapeHTML(s){ return String(s ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function escapeAttr(s){ return escapeHTML(s); }
 
-// Ensure the tab title matches the full name, and tidy the displayed path if possible.
+// Ensure the tab title matches the full name.
 try{
   document.title = 'HRS Booking Portal - Shell Oman & Hydrogen Systems CO';
-  const desiredPath = '/HRS-Booking-Portal';
-  if(location && history && (location.pathname === '/' || location.pathname.endsWith('/index.html'))){
-    history.replaceState({}, document.title, desiredPath);
-  }
 }catch(e){}
 
 applyTheme();
