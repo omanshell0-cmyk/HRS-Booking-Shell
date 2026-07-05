@@ -294,24 +294,59 @@ const state = {
   staffAccess: location.hash === '#staff',
   dashboardPollId: null,
 };
+let realtimeSource = null;
 
+function stopRealtimeSync(){
+  if(realtimeSource){
+    try{ realtimeSource.close(); }catch(e){}
+    realtimeSource = null;
+  }
+}
+function setupRealtimeSync(){
+  if(!SHARED_API_ENABLED || typeof window.EventSource !== 'function'){
+    startDashboardRefresh();
+    return;
+  }
+  if(realtimeSource) return;
+  try{
+    const endpoint = location.hostname.includes('netlify') ? '/.netlify/functions/events' : '/api/events';
+    realtimeSource = new EventSource(endpoint);
+    const handleRemoteUpdate = () => { syncDataFromServer(); };
+    realtimeSource.addEventListener('owners', handleRemoteUpdate);
+    realtimeSource.addEventListener('bookings', handleRemoteUpdate);
+    realtimeSource.addEventListener('config', handleRemoteUpdate);
+    realtimeSource.addEventListener('refresh', handleRemoteUpdate);
+    realtimeSource.onerror = () => {
+      stopRealtimeSync();
+      startDashboardRefresh();
+    };
+  }catch(e){
+    stopRealtimeSync();
+    startDashboardRefresh();
+  }
+}
 function stopDashboardRefresh(){
   if(state.dashboardPollId){ clearInterval(state.dashboardPollId); state.dashboardPollId = null; }
+  stopRealtimeSync();
 }
 function startDashboardRefresh(){
   stopDashboardRefresh();
   if(!SHARED_API_ENABLED) return;
+  setupRealtimeSync();
   state.dashboardPollId = setInterval(async ()=>{
     if(state.screen==='admin' || state.screen==='operator'){
       await syncDataFromServer();
     } else {
       stopDashboardRefresh();
     }
-  }, 30000);
+  }, 10000);
 }
 
 if(SHARED_API_ENABLED){
-  window.addEventListener('load', () => { syncDataFromServer(); });
+  window.addEventListener('load', () => { syncDataFromServer(); setupRealtimeSync(); });
+  document.addEventListener('visibilitychange', () => {
+    if(!document.hidden){ syncDataFromServer(); }
+  });
 }
 
 // live-link: when the admin (another tab/window) changes anything, refresh here

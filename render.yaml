@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: hrs-booking-portal
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true

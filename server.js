@@ -10,6 +10,18 @@ const STORE = {
   bookings: path.join(DATA_DIR, 'bookings.json'),
   config: path.join(DATA_DIR, 'config.json'),
 };
+const sseClients = new Set();
+
+function broadcastUpdate(eventName) {
+  const payload = JSON.stringify({ eventName, ts: Date.now() });
+  for (const client of Array.from(sseClients)) {
+    try {
+      client.write(`event: ${eventName}\ndata: ${payload}\n\n`);
+    } catch (err) {
+      sseClients.delete(client);
+    }
+  }
+}
 
 const defaultConfig = {
   weeklyLimits: { private: 1, company: 1 },
@@ -59,23 +71,38 @@ app.get('/api/owners', async (req, res) => res.json(await loadJson(STORE.owners,
 app.post('/api/owners', async (req, res) => {
   const data = Array.isArray(req.body) ? req.body : [];
   await saveJson(STORE.owners, data);
+  broadcastUpdate('owners');
   res.json(data);
 });
 app.get('/api/bookings', async (req, res) => res.json(await loadJson(STORE.bookings, [])));
 app.post('/api/bookings', async (req, res) => {
   const data = Array.isArray(req.body) ? req.body : [];
   await saveJson(STORE.bookings, data);
+  broadcastUpdate('bookings');
   res.json(data);
 });
 app.get('/api/config', async (req, res) => res.json(await loadJson(STORE.config, defaultConfig)));
 app.post('/api/config', async (req, res) => {
   const body = req.body && typeof req.body === 'object' ? req.body : defaultConfig;
   await saveJson(STORE.config, body);
+  broadcastUpdate('config');
   res.json(body);
 });
+app.get('/api/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+  sseClients.add(res);
+  res.write('event: connected\ndata: {"status":"ok"}\n\n');
+  req.on('close', () => {
+    sseClients.delete(res);
+  });
+});
 
-app.listen(PORT, async () => {
+app.listen(PORT, '0.0.0.0', async () => {
   await ensureData();
   console.log(`HRS Booking Portal server running at http://localhost:${PORT}`);
+  console.log(`Also reachable on your local network at http://<your-computer-ip>:${PORT}`);
   console.log('Open this from mobile on the same network using your machine IP address.');
 });
