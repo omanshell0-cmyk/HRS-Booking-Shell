@@ -275,7 +275,24 @@ function saveBookings(arr){ try{ localStorage.setItem(LS_BOOKINGS, JSON.stringif
 function loadOwners(){ try{ const r=localStorage.getItem(LS_OWNERS); if(r) return JSON.parse(r); }catch(e){} return []; }
 function saveOwners(arr){ try{ localStorage.setItem(LS_OWNERS, JSON.stringify(arr)); }catch(e){} if(SHARED_API_ENABLED) postServerData('owners', arr); }
 function loadWebhook(){ try{ return localStorage.getItem(LS_WEBHOOK)||''; }catch(e){ return ''; } }
-function loadAdminEmail(){ return SUPER_ADMIN_EMAIL; }
+function loadAdminEmail(){
+  try{
+    const stored = localStorage.getItem(LS_ADMIN_EMAIL);
+    if(stored) return stored;
+  }catch(e){}
+  return SUPER_ADMIN_EMAIL;
+}
+function canUseBrowserNotifications(){ return typeof Notification !== 'undefined'; }
+async function enableBrowserNotifications(){
+  if(!canUseBrowserNotifications()){ alert('Browser notifications are not supported in this browser.'); return; }
+  if(Notification.permission === 'granted'){ alert('Browser notifications are already enabled.'); return; }
+  const result = await Notification.requestPermission();
+  alert(result === 'granted' ? 'Browser notifications enabled.' : 'Browser notifications were not enabled.');
+}
+function showBrowserNotification(title, body){
+  if(!canUseBrowserNotifications() || Notification.permission !== 'granted') return;
+  try{ new Notification(title, { body }); }catch(e){}
+}
 
 const state = {
   screen: 'login',
@@ -339,7 +356,7 @@ function startDashboardRefresh(){
     } else {
       stopDashboardRefresh();
     }
-  }, 10000);
+  }, 90000);
 }
 
 if(SHARED_API_ENABLED){
@@ -531,6 +548,7 @@ function loginScreen(){
     <p>Choose how you'd like to sign in. Private and company drivers book within the daily slots the station has made available.</p>
   </div>
   ${maintenance && maintenance.active ? `<div class="info-box stop" style="max-width:680px;width:100%">${escapeHTML(maintenance.message)}</div>` : ''}
+  <button class="btn btn-secondary" onclick="enableBrowserNotifications()" style="max-width:280px;margin-bottom:18px">Enable browser notifications</button>
   <div class="role-grid" style="${maintenance && maintenance.active ? 'display:none' : ''}">
     <div class="role-card private" onclick="goUserLogin('private')">
       <div class="icon">🚗</div><h3>Private user</h3>
@@ -664,6 +682,9 @@ function adminScreen(){
       <button class="btn btn-secondary" onclick="downloadReport('daily')">Daily fueling report</button>
       <button class="btn btn-secondary" onclick="downloadReport('monthly')" style="margin-top:10px">Monthly report</button>
       <button class="btn btn-secondary" onclick="downloadReport('all')" style="margin-top:10px">Booking history</button>
+      <button class="btn btn-secondary" onclick="downloadRegisteredUsersReport('approved')" style="margin-top:10px">Download Approved Users Only</button>
+      <button class="btn btn-secondary" onclick="downloadRegisteredUsersReport('pending')" style="margin-top:10px">Download Pending Approvals</button>
+      <button class="btn btn-secondary" onclick="downloadRegisteredUsersReport('all')" style="margin-top:10px">Registered users / cars CSV</button>
       <button class="btn btn-secondary" onclick="downloadNoShowReport()" style="margin-top:10px">No-show vehicles</button>
     </div>
   </div>`;
@@ -911,7 +932,9 @@ function cancelBooking(id){
   const b = bookings.find(x=>x.id===id);
   if(!b) return;
   b.status = 'cancelled'; b.cancelledAt = new Date().toISOString();
-  saveBookings(bookings); state.bookings = bookings; render();
+  saveBookings(bookings); state.bookings = bookings;
+  notifyCustomerAboutBookingChange(b, 'cancelled');
+  render();
 }
 function copyBookingId(id){
   if(navigator.clipboard){ navigator.clipboard.writeText(id).catch(()=>alert(id)); }
@@ -954,6 +977,41 @@ function resetOperatorPassword(id){
   if(!op) return;
   op.password = password;
   saveConfig(cfg); state.config = cfg; render();
+}
+function notifyCustomerAboutBookingChange(booking, action){
+  if(typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  try{
+    const title = action === 'cancelled' ? 'Booking cancelled' : 'Booking updated';
+    const body = action === 'cancelled'
+      ? `Your booking for ${booking.dateISO} at ${booking.time} was cancelled by the station.`
+      : `Your booking for ${booking.dateISO} at ${booking.time} was updated.`;
+    new Notification(title, { body });
+  }catch(e){}
+  try{
+    const url = loadWebhook();
+    if(!url) return;
+    fetch(url, { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        event: action === 'cancelled' ? 'booking_cancelled' : 'booking_updated',
+        to: booking.email || '',
+        booking,
+        at: new Date().toISOString()
+      })
+    }).catch(()=>{});
+  }catch(e){}
+}
+function cancelledBookingNoticeForCustomer(mobile, carNo){
+  const key = s => (s||'').trim().toUpperCase();
+  const rows = loadBookings().filter(b => {
+    if(b.status !== 'cancelled') return false;
+    const matchesMobile = !!(b.mobile && b.mobile.trim() === (mobile||'').trim());
+    const matchesCar = !!(b.carNo && key(b.carNo) === key(carNo));
+    return matchesMobile || matchesCar;
+  });
+  if(!rows.length) return null;
+  const latest = rows.sort((a,b)=>(b.cancelledAt||'').localeCompare(a.cancelledAt||''))[0];
+  const d = new Date(latest.dateISO);
+  return `Your booking for ${weekdayNameOf(d)}, ${fmtShort(d)} at ${latest.time} was cancelled by the station. You can book a new slot if needed.`;
 }
 
 function userLoginScreen(){
@@ -1030,8 +1088,9 @@ function continueToBooking(){
     state.bookingError = `This car has reached its weekly limit of ${limit} booking${limit>1?'s':''} for this week. Please try again next week.`;
     render(); return;
   }
+  const cancelledNotice = cancelledBookingNoticeForCustomer(mobile, carNo);
   state.bookingForm = { name, mobile, email, carNo, dateISO:null, time:null };
-  state.bookingError=''; state.gateNotice=null; state.screen='booking'; render();
+  state.bookingError=''; state.gateNotice = cancelledNotice ? { kind:'wait', text:cancelledNotice } : null; state.screen='booking'; render();
 }
 
 function bookingScreen(){
@@ -1086,6 +1145,7 @@ function bookingScreen(){
     <h2>Choose your refuelling slot</h2>
     <p class="sub">Booking as <strong>${escapeHTML(state.bookingForm.name)}</strong> · ${escapeHTML(state.bookingForm.mobile)} · ${escapeHTML(state.bookingForm.carNo)}.</p>
     ${state.bookingError ? `<div class="error-box">${state.bookingError}</div>` : ''}
+    ${state.gateNotice ? `<div class="info-box ${state.gateNotice.kind}">${state.gateNotice.text}</div>` : ''}
     <div class="week-label">
       <div class="wk">Week of ${fmtShort(weekDates[0])} – ${fmtShort(weekDates[5])} (Sat–Thu)</div>
       <div class="wk" style="color:var(--text-dim)">Friday — week off</div>
@@ -1189,7 +1249,42 @@ function notifyNewOwner(o){
         at: o.firstSeen }) }).catch(()=>{});
   }catch(e){}
 }
+function notifyMaintenanceChange(active, message){
+  showBrowserNotification(active ? 'Station maintenance started' : 'Station maintenance ended', active ? message : 'Booking and fueling are available again.');
+  const url = loadWebhook();
+  if(!url) return;
+  try{
+    fetch(url, { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ event: active ? 'maintenance_on' : 'maintenance_off', message, at: new Date().toISOString() }) }).catch(()=>{});
+  }catch(e){}
+}
 
+function downloadBookingConfirmation(){
+  const b = state.lastBooking;
+  if(!b) return;
+  const d = new Date(b.dateISO);
+  const content = [
+    'HRS Booking Confirmation',
+    '',
+    `Booking ID: ${b.id || 'N/A'}`,
+    `Day: ${weekdayNameOf(d)}, ${fmtShort(d)}`,
+    `Time: ${b.time}`,
+    `${b.role==='private'?'Name':'Company'}: ${b.name}`,
+    `Mobile: ${b.mobile}`,
+    `Car no.: ${b.carNo}`,
+    '',
+    'Please take a screenshot of this page for your reference.'
+  ].join('\n');
+  const blob = new Blob([content], { type:'text/plain;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `hrs-booking-${b.id || 'confirmation'}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 function successScreen(){
   const b = state.lastBooking;
   if(!b) return loginScreen();
@@ -1200,13 +1295,18 @@ function successScreen(){
     <h2>Slot confirmed</h2>
     <p class="sub">Your hydrogen refuelling slot has been booked and sent to the station.</p>
     <div class="ticket">
+      <div class="ticket-row"><span>Booking ID</span><span>${escapeHTML(b.id || 'N/A')}</span></div>
       <div class="ticket-row"><span>Day</span><span>${weekdayNameOf(d)}, ${fmtShort(d)}</span></div>
       <div class="ticket-row"><span>Time</span><span>${b.time}</span></div>
       <div class="ticket-row"><span>${b.role==='private'?'Name':'Company'}</span><span>${escapeHTML(b.name)}</span></div>
       <div class="ticket-row"><span>Mobile</span><span>${escapeHTML(b.mobile)}</span></div>
       <div class="ticket-row"><span>Car no.</span><span>${escapeHTML(b.carNo)}</span></div>
     </div>
-    <button class="btn btn-secondary" onclick="goLogin()">Done</button>
+    <p class="hint" style="margin-top:8px;">Please take a screenshot of this page for your reference.</p>
+    <div style="display:flex;flex-direction:column;gap:10px;margin-top:16px;">
+      <button class="btn btn-secondary" onclick="downloadBookingConfirmation()">Download confirmation</button>
+      <button class="btn btn-secondary" onclick="goLogin()">Done</button>
+    </div>
   </div>`;
 }
 
@@ -1273,6 +1373,7 @@ function customizePanel(){
     };
     saveConfig(cfg);
     state.config = cfg;
+    notifyMaintenanceChange(cfg.maintenance.active, cfg.maintenance.message);
     alert(cfg.maintenance.active ? "Maintenance mode is now ON. Users cannot book." : "Maintenance mode is now OFF. Users can book again.");
     render();
   }
@@ -1284,6 +1385,8 @@ function customizePanel(){
     const morningLimitEl = document.getElementById("admin-morning-limit");
     const afternoonLimitEl = document.getElementById("admin-afternoon-limit");
     const messageEl = document.getElementById("maintenance-message");
+    const webhookEl = document.getElementById("admin-webhook-url");
+    const adminEmailEl = document.getElementById("admin-email");
     const openingEl = document.getElementById("admin-opening-time");
     const closingEl = document.getElementById("admin-closing-time");
     const advanceEl = document.getElementById("admin-advance-days");
@@ -1294,6 +1397,14 @@ function customizePanel(){
         private: Math.max(1, parseInt(privateLimitEl.value, 10) || 1),
         company: Math.max(1, parseInt(companyLimitEl.value, 10) || 1)
       };
+    }
+    if(webhookEl){
+      const url = (webhookEl.value||'').trim();
+      if(url){ localStorage.setItem(LS_WEBHOOK, url); } else { localStorage.removeItem(LS_WEBHOOK); }
+    }
+    if(adminEmailEl){
+      const email = (adminEmailEl.value||'').trim();
+      if(email){ localStorage.setItem(LS_ADMIN_EMAIL, email); } else { localStorage.removeItem(LS_ADMIN_EMAIL); }
     }
     if(totalDailyEl) cfg.totalDailyLimit = Math.max(1, parseInt(totalDailyEl.value, 10) || 1);
     if(morningLimitEl || afternoonLimitEl){
@@ -1346,6 +1457,26 @@ function customizePanel(){
     render();
   }
 
+  function downloadRegisteredUsersReport(scope) {
+    const allRows = loadOwners();
+    const rows = allRows.filter(o => {
+      const status = String(o.status || 'approved').toLowerCase();
+      if(scope === 'pending') return status === 'pending';
+      if(scope === 'approved') return status === 'approved';
+      return true;
+    });
+    const fields = ["id","status","role","name","mobile","email","carNo","createdAt"];
+    const csv = [fields.join(",")].concat(rows.map(o => fields.map(f => csvCell(o[f])).join(","))).join("\n");
+    const blob = new Blob([csv], { type:"text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = scope === 'pending' ? 'hrs-pending-approvals.csv' : scope === 'approved' ? 'hrs-approved-users.csv' : 'hrs-registered-users.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
   function downloadReport() {
     const rows = loadBookings();
     const fields = ["id","status","role","name","mobile","email","carNo","dateISO","weekday","time","kgFilled","createdAt","completedAt"];
