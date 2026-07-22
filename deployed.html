@@ -363,6 +363,30 @@ function expandRange(start, end){
   while(cur < stop){ out.push(pad(Math.floor(cur/60))+':'+pad(cur%60)); cur += 60; }
   return out;
 }
+function getSlotConfig(role){
+  const cfg = state.config.slotConfig || {};
+  const totalDailySlots = Math.max(1, parseInt(cfg.totalDailySlots, 10) || 11);
+  return {
+    totalDailySlots: totalDailySlots,
+    startTime: cfg.startTime || '09:00',
+    intervalMinutes: Math.max(30, parseInt(cfg.intervalMinutes, 10) || 30),
+    privateSlotsPerDay: Math.max(1, parseInt(cfg.privateSlotsPerDay, 10) || 5),
+    companySlotsPerDay: Math.max(1, parseInt(cfg.companySlotsPerDay, 10) || 6)
+  };
+}
+function buildTimeSlots(role){
+  const { startTime, intervalMinutes, totalDailySlots } = getSlotConfig(role);
+  const times = [];
+  let [hour, minute] = startTime.split(':').map(Number);
+  const startMinutes = hour*60 + minute;
+  for(let i=0;i<totalDailySlots;i++){
+    const totalMinutes = startMinutes + i*intervalMinutes;
+    const h = Math.floor(totalMinutes/60);
+    const m = totalMinutes % 60;
+    times.push(pad(h)+':'+pad(m));
+  }
+  return times;
+}
 // Station-wide blocked hours for the day (apply to BOTH private and company)
 function stationBlocked(weekday){ return parseTimes(state.config[weekday].blocked); }
 function rangesOf(weekday, role){ return (state.config[weekday][role] && state.config[weekday][role].ranges) || []; }
@@ -370,11 +394,9 @@ function rangesOf(weekday, role){ return (state.config[weekday][role] && state.c
 function slotMap(weekday, role){
   const blocked = stationBlocked(weekday);
   const map = {};
-  const roleCfg = (state.config[weekday] && state.config[weekday][role]) || {};
-  const defaultPerHour = roleCfg.perHour || 0;
-  rangesOf(weekday, role).forEach(r=>{
-    const perHour = (r && r.perHour) ? r.perHour : defaultPerHour;
-    expandRange(r.start, r.end).forEach(h=>{ if(!blocked.includes(h)) map[h]=Math.max(0, perHour||0); });
+  const slotTimes = buildTimeSlots(role);
+  slotTimes.forEach(time => {
+    if(!blocked.includes(time)) map[time] = 1;
   });
   return map;
 }
@@ -382,7 +404,7 @@ function slotsForRoleDay(weekday, role){ const m=slotMap(weekday, role); return 
 function capacityAt(weekday, role, time){ return slotMap(weekday, role)[time]||0; }
 function dayTotalCapacity(weekday, role){ const m=slotMap(weekday, role); return Object.values(m).reduce((a,b)=>a+b,0); }
 function weeklyLimitFor(role){ const v=state.config.weeklyLimits && state.config.weeklyLimits[role]; const n=parseInt(v,10); return isNaN(n)?1:Math.max(1,n); }
-function bookingsForSlot(dateISO, role, time){ return capacityBookings().filter(b=>b.dateISO===dateISO && b.role===role && b.time===time); }
+function bookingsForSlot(dateISO, time){ return capacityBookings().filter(b=>b.dateISO===dateISO && b.time===time); }
 function bookingsForDateRole(dateISO, role){ return capacityBookings().filter(b=>b.dateISO===dateISO && b.role===role); }
 function dailyLimitReached(dateISO){ const n=parseInt(state.config.totalDailyLimit,10); return n>0 && dayBookings(dateISO).length >= n; }
 function periodLimitReached(dateISO,time){
@@ -1033,7 +1055,7 @@ function bookingScreen(){
     const wd = weekdayNameOf(new Date(dateISO));
     const slots = slotsForRoleDay(wd, role);
     const chips = slots.map(t=>{
-      const remaining = capacityAt(wd, role, t) - bookingsForSlot(dateISO, role, t).length;
+      const remaining = capacityAt(wd, role, t) - bookingsForSlot(dateISO, t).length;
       const unavailable = remaining<=0 || dailyLimitReached(dateISO) || periodLimitReached(dateISO,t) || !withinBookingWindow(dateISO,t);
       const selected = state.bookingForm.time === t;
       const cls = ['hour-chip', selected?'selected':'', unavailable?'unavailable':''].join(' ').trim();
@@ -1090,7 +1112,7 @@ function confirmBooking(){
   if(periodLimitReached(dateISO,time)){ state.bookingError='That morning/afternoon period is full. Please pick another time.'; render(); return; }
   if(!withinBookingWindow(dateISO,time)){ state.bookingError='That time is outside the current station booking hours. Please pick another time.'; render(); return; }
   if(!slotsForRoleDay(wd, state.role).includes(time)){ state.bookingError='That time is no longer available. Please pick another time.'; render(); return; }
-  if(bookingsForSlot(dateISO, state.role, time).length >= capacityAt(wd, state.role, time)){ state.bookingError='That time just filled up — please pick another time.'; render(); return; }
+  if(bookingsForSlot(dateISO, time).length >= capacityAt(wd, state.role, time)){ state.bookingError='That time just filled up — please pick another time.'; render(); return; }
   const booking = {
     id: 'bk_'+Date.now()+'_'+Math.random().toString(36).slice(2,7),
     role: state.role, name, mobile, email, carNo,

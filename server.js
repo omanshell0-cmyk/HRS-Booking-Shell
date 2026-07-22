@@ -9,6 +9,8 @@ const STORE = {
   owners: path.join(DATA_DIR, 'owners.json'),
   bookings: path.join(DATA_DIR, 'bookings.json'),
   config: path.join(DATA_DIR, 'config.json'),
+  companies: path.join(DATA_DIR, 'companies.json'),
+  vehicles: path.join(DATA_DIR, 'vehicles.json'),
 };
 const sseClients = new Set();
 
@@ -102,6 +104,20 @@ app.post('/api/config', async (req, res) => {
   await saveJson(STORE.config, body);
   broadcastUpdate('config');
   res.json(body);
+});
+app.get('/api/companies', async (req, res) => res.json(await loadJson(STORE.companies, [])));
+app.post('/api/companies', async (req, res) => {
+  const data = Array.isArray(req.body) ? req.body : [];
+  await saveJson(STORE.companies, data);
+  broadcastUpdate('companies');
+  res.json(data);
+});
+app.get('/api/vehicles', async (req, res) => res.json(await loadJson(STORE.vehicles, [])));
+app.post('/api/vehicles', async (req, res) => {
+  const data = Array.isArray(req.body) ? req.body : [];
+  await saveJson(STORE.vehicles, data);
+  broadcastUpdate('vehicles');
+  res.json(data);
 });
 app.get('/api/events', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');

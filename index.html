@@ -267,7 +267,7 @@ async function syncConfigFromServer(){
 }
 async function syncDataFromServer(){
   if(!SHARED_API_ENABLED) return;
-  await Promise.all([syncOwnersFromServer(), syncBookingsFromServer(), syncConfigFromServer()]);
+  await Promise.all([syncOwnersFromServer(), syncBookingsFromServer(), syncConfigFromServer(), syncCompaniesFromServer(), syncVehiclesFromServer()]);
   if(document.hasFocus()) render();
 }
 
@@ -277,10 +277,23 @@ function loadBookings(){ try{ const r=localStorage.getItem(LS_BOOKINGS); if(r) r
 function saveBookings(arr){ try{ localStorage.setItem(LS_BOOKINGS, JSON.stringify(arr)); }catch(e){} if(SHARED_API_ENABLED) postServerData('bookings', arr); }
 function loadOwners(){ try{ const r=localStorage.getItem(LS_OWNERS); if(r) return JSON.parse(r); }catch(e){} return []; }
 function saveOwners(arr){ try{ localStorage.setItem(LS_OWNERS, JSON.stringify(arr)); }catch(e){} if(SHARED_API_ENABLED) postServerData('owners', arr); }
+
 function loadCompanies(){ try{ const r=localStorage.getItem(LS_COMPANIES); if(r) return JSON.parse(r); }catch(e){} return []; }
-function saveCompanies(arr){ try{ localStorage.setItem(LS_COMPANIES, JSON.stringify(arr)); }catch(e){} }
+function saveCompanies(arr){ try{ localStorage.setItem(LS_COMPANIES, JSON.stringify(arr)); }catch(e){} if(SHARED_API_ENABLED) postServerData('companies', arr); }
 function loadVehicles(){ try{ const r=localStorage.getItem(LS_VEHICLES); if(r) return JSON.parse(r); }catch(e){} return []; }
-function saveVehicles(arr){ try{ localStorage.setItem(LS_VEHICLES, JSON.stringify(arr)); }catch(e){} }
+function saveVehicles(arr){ try{ localStorage.setItem(LS_VEHICLES, JSON.stringify(arr)); }catch(e){} if(SHARED_API_ENABLED) postServerData('vehicles', arr); }
+async function syncCompaniesFromServer(){
+  const companies = await fetchServerData('companies', null);
+  if(Array.isArray(companies)){
+    try{ localStorage.setItem(LS_COMPANIES, JSON.stringify(companies)); }catch(e){}
+  }
+}
+async function syncVehiclesFromServer(){
+  const vehicles = await fetchServerData('vehicles', null);
+  if(Array.isArray(vehicles)){
+    try{ localStorage.setItem(LS_VEHICLES, JSON.stringify(vehicles)); }catch(e){}
+  }
+}
 function loadWebhook(){ try{ return localStorage.getItem(LS_WEBHOOK)||''; }catch(e){ return ''; } }
 function loadAdminEmail(){
   try{
@@ -342,6 +355,8 @@ function setupRealtimeSync(){
     realtimeSource.addEventListener('owners', handleRemoteUpdate);
     realtimeSource.addEventListener('bookings', handleRemoteUpdate);
     realtimeSource.addEventListener('config', handleRemoteUpdate);
+    realtimeSource.addEventListener('companies', handleRemoteUpdate);
+    realtimeSource.addEventListener('vehicles', handleRemoteUpdate);
     realtimeSource.addEventListener('refresh', handleRemoteUpdate);
     realtimeSource.onerror = () => {
       stopRealtimeSync();
@@ -380,6 +395,8 @@ if(SHARED_API_ENABLED){
 window.addEventListener('storage', (e)=>{
   if(e.key===LS_CONFIG){ state.config = loadConfig(); render(); }
   if(e.key===LS_BOOKINGS){ state.bookings = loadBookings(); render(); }
+  if(e.key===LS_COMPANIES){ render(); }
+  if(e.key===LS_VEHICLES){ render(); }
 });
 window.addEventListener('hashchange', ()=>{ state.staffAccess = location.hash === '#staff'; render(); });
 
@@ -428,11 +445,8 @@ function expandRange(start, end){
 function getSlotConfig(role){
   const cfg = state.config.slotConfig || {};
   const totalDailySlots = Math.max(1, parseInt(cfg.totalDailySlots, 10) || 11);
-  const roleSlots = role === 'private'
-    ? Math.max(1, parseInt(cfg.privateSlotsPerDay, 10) || 5)
-    : Math.max(1, parseInt(cfg.companySlotsPerDay, 10) || 6);
   return {
-    totalDailySlots: Math.min(totalDailySlots, roleSlots),
+    totalDailySlots: totalDailySlots,
     startTime: cfg.startTime || '09:00',
     intervalMinutes: Math.max(30, parseInt(cfg.intervalMinutes, 10) || 30),
     privateSlotsPerDay: Math.max(1, parseInt(cfg.privateSlotsPerDay, 10) || 5),
@@ -1595,7 +1609,8 @@ function customizePanel(){
           </select></div>
         <div class="cp-row"><label>Body text</label>
           <select onchange="setThemeVal('fontBody', this.value)">
-            <option value="'Inter',sans-serif" ${t.fontBody.includes('Inter')?'selected':''}>Inter</option>
+            <option value="'Inter',sans-serif" ${t.fontBody            cd "c:\Users\HP\OneDrive - Hydrogen Systems\Desktop\H2 Drive Web App"
+            node server.js.includes('Inter')?'selected':''}>Inter</option>
             <option value="'Work Sans',sans-serif" ${t.fontBody.includes('Work Sans')?'selected':''}>Work Sans</option>
             <option value="'Roboto',sans-serif" ${t.fontBody.includes('Roboto')?'selected':''}>Roboto</option>
             <option value="'Nunito Sans',sans-serif" ${t.fontBody.includes('Nunito')?'selected':''}>Nunito Sans</option>
