@@ -25,7 +25,8 @@ function broadcastUpdate(eventName) {
 
 const defaultConfig = {
   weeklyLimits: { private: 1, company: 1 },
-  totalDailyLimit: 30,
+  totalDailyLimit: 11,
+  slotConfig: { totalDailySlots: 11, startTime: '09:00', intervalMinutes: 30, privateSlotsPerDay: 5, companySlotsPerDay: 6 },
   slotPeriods: { morningLimit: 12, afternoonLimit: 18 },
   bookingSettings: { openingTime: '08:00', closingTime: '20:00', advanceDays: 6, cutoffTime: '18:00' },
   maintenance: { active: false, message: 'Station is currently under maintenance. Booking is temporarily unavailable.' },
@@ -37,6 +38,20 @@ const defaultConfig = {
   Wednesday: { blocked: '', private: { ranges: [{ start: '09:00', end: '13:00' }], perHour: 2 }, company: { ranges: [{ start: '14:00', end: '18:00' }], perHour: 2 } },
   Thursday: { blocked: '', private: { ranges: [{ start: '10:00', end: '14:00' }], perHour: 2 }, company: { ranges: [{ start: '15:00', end: '18:00' }], perHour: 1 } },
 };
+
+function normalizeConfig(data) {
+  const incoming = data && typeof data === 'object' ? data : {};
+  return {
+    ...defaultConfig,
+    ...incoming,
+    weeklyLimits: { ...defaultConfig.weeklyLimits, ...(incoming.weeklyLimits || {}) },
+    slotConfig: { ...defaultConfig.slotConfig, ...(incoming.slotConfig || {}) },
+    slotPeriods: { ...defaultConfig.slotPeriods, ...(incoming.slotPeriods || {}) },
+    bookingSettings: { ...defaultConfig.bookingSettings, ...(incoming.bookingSettings || {}) },
+    maintenance: { ...defaultConfig.maintenance, ...(incoming.maintenance || {}) },
+    operators: Array.isArray(incoming.operators) && incoming.operators.length ? incoming.operators : defaultConfig.operators,
+  };
+}
 
 async function ensureData() {
   await fs.mkdir(DATA_DIR, { recursive: true });
@@ -81,9 +96,9 @@ app.post('/api/bookings', async (req, res) => {
   broadcastUpdate('bookings');
   res.json(data);
 });
-app.get('/api/config', async (req, res) => res.json(await loadJson(STORE.config, defaultConfig)));
+app.get('/api/config', async (req, res) => res.json(normalizeConfig(await loadJson(STORE.config, defaultConfig))));
 app.post('/api/config', async (req, res) => {
-  const body = req.body && typeof req.body === 'object' ? req.body : defaultConfig;
+  const body = normalizeConfig(req.body && typeof req.body === 'object' ? req.body : defaultConfig);
   await saveJson(STORE.config, body);
   broadcastUpdate('config');
   res.json(body);

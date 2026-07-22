@@ -178,6 +178,8 @@ const LOGO_H2="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIcAAABgCAYAAAA3pmE
 const LS_CONFIG = 'hrs_config_v2';
 const LS_BOOKINGS = 'hrs_bookings_v1';
 const LS_OWNERS = 'hrs_owners_v1';
+const LS_COMPANIES = 'hrs_companies_v1';
+const LS_VEHICLES = 'hrs_vehicles_v1';
 const LS_WEBHOOK = 'hrs_webhook_v1';
 const LS_ADMIN_EMAIL = 'hrs_admin_email_v1';
 const SUPER_ADMIN_EMAIL = 'Operations.Oman@h2systems.sa';
@@ -187,20 +189,20 @@ const WEEKDAYS = ['Saturday','Sunday','Monday','Tuesday','Wednesday','Thursday']
 // Each day: a station-wide "blocked" list (both roles) + per-role time ranges and cars/hour.
 // Morning-for-private, evening-for-company etc. is just a matter of which ranges you give each role.
 function defaultConfig(){
-  const R=(s,e)=>({start:s,end:e});
   return {
     weeklyLimits:{ private:1, company:1 },
-    totalDailyLimit:30,
+    totalDailyLimit:11,
+    slotConfig:{ totalDailySlots:11, startTime:'09:00', intervalMinutes:30, privateSlotsPerDay:5, companySlotsPerDay:6 },
     slotPeriods:{ morningLimit:12, afternoonLimit:18 },
     bookingSettings:{ openingTime:'08:00', closingTime:'20:00', advanceDays:6, cutoffTime:'18:00' },
     maintenance:{ active:false, message:'Station is currently under maintenance. Booking is temporarily unavailable.' },
     operators:[{ id:'operator', password:'op123', name:'Default Operator' }],
-    Saturday:  { blocked:'', private:{ranges:[R('08:00','12:00')],perHour:3}, company:{ranges:[R('16:00','20:00')],perHour:2} },
-    Sunday:    { blocked:'', private:{ranges:[R('08:00','12:00')],perHour:3}, company:{ranges:[R('16:00','20:00')],perHour:2} },
-    Monday:    { blocked:'', private:{ranges:[R('09:00','13:00')],perHour:2}, company:{ranges:[R('14:00','18:00')],perHour:2} },
-    Tuesday:   { blocked:'', private:{ranges:[R('09:00','13:00')],perHour:2}, company:{ranges:[R('14:00','18:00')],perHour:2} },
-    Wednesday: { blocked:'', private:{ranges:[R('09:00','13:00')],perHour:2}, company:{ranges:[R('14:00','18:00')],perHour:2} },
-    Thursday:  { blocked:'', private:{ranges:[R('10:00','14:00')],perHour:2}, company:{ranges:[R('15:00','18:00')],perHour:1} },
+    Saturday:{ blocked:'', private:{ ranges:[] }, company:{ ranges:[] } },
+    Sunday:{ blocked:'', private:{ ranges:[] }, company:{ ranges:[] } },
+    Monday:{ blocked:'', private:{ ranges:[] }, company:{ ranges:[] } },
+    Tuesday:{ blocked:'', private:{ ranges:[] }, company:{ ranges:[] } },
+    Wednesday:{ blocked:'', private:{ ranges:[] }, company:{ ranges:[] } },
+    Thursday:{ blocked:'', private:{ ranges:[] }, company:{ ranges:[] } },
   };
 }
 function normalizeConfig(cfg){
@@ -208,6 +210,7 @@ function normalizeConfig(cfg){
   cfg = cfg || {};
   cfg.weeklyLimits = cfg.weeklyLimits || def.weeklyLimits;
   cfg.totalDailyLimit = cfg.totalDailyLimit || def.totalDailyLimit;
+  cfg.slotConfig = cfg.slotConfig || def.slotConfig;
   cfg.slotPeriods = cfg.slotPeriods || def.slotPeriods;
   cfg.bookingSettings = cfg.bookingSettings || def.bookingSettings;
   cfg.maintenance = cfg.maintenance || def.maintenance;
@@ -274,6 +277,10 @@ function loadBookings(){ try{ const r=localStorage.getItem(LS_BOOKINGS); if(r) r
 function saveBookings(arr){ try{ localStorage.setItem(LS_BOOKINGS, JSON.stringify(arr)); }catch(e){} if(SHARED_API_ENABLED) postServerData('bookings', arr); }
 function loadOwners(){ try{ const r=localStorage.getItem(LS_OWNERS); if(r) return JSON.parse(r); }catch(e){} return []; }
 function saveOwners(arr){ try{ localStorage.setItem(LS_OWNERS, JSON.stringify(arr)); }catch(e){} if(SHARED_API_ENABLED) postServerData('owners', arr); }
+function loadCompanies(){ try{ const r=localStorage.getItem(LS_COMPANIES); if(r) return JSON.parse(r); }catch(e){} return []; }
+function saveCompanies(arr){ try{ localStorage.setItem(LS_COMPANIES, JSON.stringify(arr)); }catch(e){} }
+function loadVehicles(){ try{ const r=localStorage.getItem(LS_VEHICLES); if(r) return JSON.parse(r); }catch(e){} return []; }
+function saveVehicles(arr){ try{ localStorage.setItem(LS_VEHICLES, JSON.stringify(arr)); }catch(e){} }
 function loadWebhook(){ try{ return localStorage.getItem(LS_WEBHOOK)||''; }catch(e){ return ''; } }
 function loadAdminEmail(){
   try{
@@ -308,6 +315,9 @@ const state = {
   lastBooking: null,
   customizeOpen: false,
   gateNotice: null,
+  companySession: null,
+  companyError: '',
+  companyNotice: null,
   staffAccess: location.hash === '#staff',
   dashboardPollId: null,
 };
@@ -415,18 +425,40 @@ function expandRange(start, end){
   while(cur < stop){ out.push(pad(Math.floor(cur/60))+':'+pad(cur%60)); cur += 60; }
   return out;
 }
-// Station-wide blocked hours for the day (apply to BOTH private and company)
+function getSlotConfig(role){
+  const cfg = state.config.slotConfig || {};
+  const totalDailySlots = Math.max(1, parseInt(cfg.totalDailySlots, 10) || 11);
+  const roleSlots = role === 'private'
+    ? Math.max(1, parseInt(cfg.privateSlotsPerDay, 10) || 5)
+    : Math.max(1, parseInt(cfg.companySlotsPerDay, 10) || 6);
+  return {
+    totalDailySlots: Math.min(totalDailySlots, roleSlots),
+    startTime: cfg.startTime || '09:00',
+    intervalMinutes: Math.max(30, parseInt(cfg.intervalMinutes, 10) || 30),
+    privateSlotsPerDay: Math.max(1, parseInt(cfg.privateSlotsPerDay, 10) || 5),
+    companySlotsPerDay: Math.max(1, parseInt(cfg.companySlotsPerDay, 10) || 6)
+  };
+}
+function buildTimeSlots(role){
+  const { startTime, intervalMinutes, totalDailySlots } = getSlotConfig(role);
+  const times = [];
+  let [hour, minute] = startTime.split(':').map(Number);
+  const startMinutes = hour*60 + minute;
+  for(let i=0;i<totalDailySlots;i++){
+    const totalMinutes = startMinutes + i*intervalMinutes;
+    const h = Math.floor(totalMinutes/60);
+    const m = totalMinutes % 60;
+    times.push(pad(h)+':'+pad(m));
+  }
+  return times;
+}
 function stationBlocked(weekday){ return parseTimes(state.config[weekday].blocked); }
-function rangesOf(weekday, role){ return (state.config[weekday][role] && state.config[weekday][role].ranges) || []; }
-// Map of available hour -> cars allowed that hour (each time block carries its own cars/hr), minus station-blocked hours
 function slotMap(weekday, role){
   const blocked = stationBlocked(weekday);
   const map = {};
-  const roleCfg = (state.config[weekday] && state.config[weekday][role]) || {};
-  const defaultPerHour = roleCfg.perHour || 0;
-  rangesOf(weekday, role).forEach(r=>{
-    const perHour = (r && r.perHour) ? r.perHour : defaultPerHour;
-    expandRange(r.start, r.end).forEach(h=>{ if(!blocked.includes(h)) map[h]=Math.max(0, perHour||0); });
+  const slotTimes = buildTimeSlots(role);
+  slotTimes.forEach(time => {
+    if(!blocked.includes(time)) map[time] = 1;
   });
   return map;
 }
@@ -434,13 +466,11 @@ function slotsForRoleDay(weekday, role){ const m=slotMap(weekday, role); return 
 function capacityAt(weekday, role, time){ return slotMap(weekday, role)[time]||0; }
 function dayTotalCapacity(weekday, role){ const m=slotMap(weekday, role); return Object.values(m).reduce((a,b)=>a+b,0); }
 function weeklyLimitFor(role){ const v=state.config.weeklyLimits && state.config.weeklyLimits[role]; const n=parseInt(v,10); return isNaN(n)?1:Math.max(1,n); }
-function bookingsForSlot(dateISO, role, time){ return capacityBookings().filter(b=>b.dateISO===dateISO && b.role===role && b.time===time); }
-function bookingsForDateRole(dateISO, role){ return capacityBookings().filter(b=>b.dateISO===dateISO && b.role===role); }
+function bookingsForSlot(dateISO, time){ return capacityBookings().filter(b=>b.dateISO===dateISO && b.time===time); }
+function bookingsForDate(dateISO){ return capacityBookings().filter(b=>b.dateISO===dateISO); }
 function dailyLimitReached(dateISO){ const n=parseInt(state.config.totalDailyLimit,10); return n>0 && dayBookings(dateISO).length >= n; }
 function periodLimitReached(dateISO,time){
-  const p = periodOf(time);
-  const limit = parseInt(p==='morning' ? state.config.slotPeriods?.morningLimit : state.config.slotPeriods?.afternoonLimit,10);
-  return limit > 0 && bookingsForPeriod(dateISO,p).length >= limit;
+  return false;
 }
 function withinBookingWindow(dateISO,time){
   const s = state.config.bookingSettings || {};
@@ -533,6 +563,10 @@ function screenHTML(){
     case 'admin': return state.adminAuthed ? adminScreen() : adminLoginScreen();
     case 'operatorLogin': return operatorLoginScreen();
     case 'operator': return state.operatorAuthed ? operatorScreen() : operatorLoginScreen();
+    case 'companyRegister': return companyRegisterScreen();
+    case 'companyLogin': return companyLoginScreen();
+    case 'companyDashboard': return companyDashboardScreen();
+    case 'companyCars': return companyCarsScreen();
     case 'userLogin': return userLoginScreen();
     case 'booking': return bookingScreen();
     case 'success': return successScreen();
@@ -555,17 +589,21 @@ function loginScreen(){
       <p>Book your weekly slot with your name, mobile number and car number.</p>
       <div class="go">Book a slot →</div>
     </div>
-    <div class="role-card company" onclick="goUserLogin('company')">
-      <div class="icon">🏢</div><h3>Company car</h3>
-      <p>Book a weekly slot for a company vehicle with company name, mobile number and car number.</p>
-      <div class="go">Book a slot →</div>
+    <div class="role-card company" onclick="goCompanyRegister()">
+      <div class="icon">🏢</div><h3>Company account</h3>
+      <p>Register a company, manage approved vehicles, and book within the company daily limit.</p>
+      <div class="go">Company portal →</div>
     </div>
   </div>`;
 }
-function goLogin(){ state.screen='login'; state.role=null; state.bookingError=''; state.gateNotice=null; state.bookingForm={name:'',mobile:'',email:'',carNo:'',dateISO:null,time:null}; stopDashboardRefresh(); render(); }
+function goLogin(){ state.screen='login'; state.role=null; state.bookingError=''; state.gateNotice=null; state.bookingForm={name:'',mobile:'',email:'',carNo:'',dateISO:null,time:null}; state.companyError=''; state.companyNotice=null; state.companySession=null; stopDashboardRefresh(); render(); }
 function goUserLogin(role){ state.role=role; state.screen='userLogin'; state.bookingError=''; state.gateNotice=null; state.bookingForm={name:'',mobile:'',email:'',carNo:'',dateISO:null,time:null}; render(); }
 
 function goAdminLogin(){ state.screen='adminLogin'; state.adminError=''; render(); }
+function goCompanyRegister(){ state.screen='companyRegister'; state.companyError=''; state.companyNotice=null; render(); }
+function goCompanyLogin(){ state.screen='companyLogin'; state.companyError=''; state.companyNotice=null; render(); }
+function goCompanyDashboard(){ state.screen='companyDashboard'; state.companyError=''; state.companyNotice=null; render(); }
+function goCompanyCars(){ state.screen='companyCars'; state.companyError=''; state.companyNotice=null; render(); }
 function adminLoginScreen(){
   return `
   <button class="back-link" onclick="goLogin()">← Back</button>
@@ -592,6 +630,153 @@ function adminLogin(){
   startDashboardRefresh();
 }
 function adminLogout(){ state.adminAuthed=false; state.screen='login'; stopDashboardRefresh(); render(); }
+
+function companyRegisterScreen(){
+  return `
+  <button class="back-link" onclick="goLogin()">← Back</button>
+  <div class="panel">
+    <h2>Company registration</h2>
+    <p class="sub">Register your company account. It will stay pending until the station admin approves it.</p>
+    ${state.companyError ? `<div class="error-box">${state.companyError}</div>` : ''}
+    ${state.companyNotice ? `<div class="info-box wait">${state.companyNotice}</div>` : ''}
+    <div class="field"><label>Company name</label><input type="text" id="company-name" placeholder="e.g. Oman Logistics LLC"></div>
+    <div class="field"><label>Company email</label><input type="email" id="company-email" placeholder="contact@company.com"></div>
+    <div class="field"><label>Mobile number</label><input type="tel" id="company-mobile" placeholder="e.g. +968 9XXXXXXX"></div>
+    <div class="field"><label>Login details</label><input type="text" id="company-login" placeholder="Choose a company login ID"></div>
+    <div class="field"><label>Password</label><input type="password" id="company-password" placeholder="Choose a password"></div>
+    <button class="btn btn-primary" onclick="registerCompany()">Register company</button>
+    <div style="margin-top:12px"><button class="btn btn-secondary" onclick="goCompanyLogin()">Already registered? Sign in</button></div>
+  </div>`;
+}
+function registerCompany(){
+  const name = document.getElementById('company-name').value.trim();
+  const email = document.getElementById('company-email').value.trim();
+  const mobile = document.getElementById('company-mobile').value.trim();
+  const login = document.getElementById('company-login').value.trim();
+  const password = document.getElementById('company-password').value;
+  if(!name || !email || !mobile || !login || !password){ state.companyError='Please complete all company fields.'; render(); return; }
+  const companies = loadCompanies();
+  if(companies.some(c => c.login === login || c.email.toLowerCase() === email.toLowerCase())){ state.companyError='That company email or login is already registered.'; render(); return; }
+  const company = { id:'co_'+Date.now()+'_'+Math.random().toString(36).slice(2,6), name, email, mobile, login, password, status:'pending', createdAt:new Date().toISOString(), approvedCars:0, totalCars:0 };
+  companies.push(company); saveCompanies(companies);
+  state.companyError=''; state.companyNotice='Your company account has been created and is pending approval. Please wait for the station admin to approve it.'; render();
+}
+function companyLoginScreen(){
+  return `
+  <button class="back-link" onclick="goLogin()">← Back</button>
+  <div class="panel">
+    <h2>Company sign in</h2>
+    <p class="sub">Use your company login ID and password to manage your cars and bookings.</p>
+    ${state.companyError ? `<div class="error-box">${state.companyError}</div>` : ''}
+    ${state.companyNotice ? `<div class="info-box wait">${state.companyNotice}</div>` : ''}
+    <div class="field"><label>Company login ID</label><input type="text" id="company-login-id" placeholder="company login"></div>
+    <div class="field"><label>Password</label><input type="password" id="company-password-id" placeholder="password" onkeydown="if(event.key==='Enter') companyLogin()"></div>
+    <button class="btn btn-primary" onclick="companyLogin()">Sign in</button>
+    <div style="margin-top:12px"><button class="btn btn-secondary" onclick="goCompanyRegister()">Register company</button></div>
+  </div>`;
+}
+function companyLogin(){
+  const login = document.getElementById('company-login-id').value.trim();
+  const password = document.getElementById('company-password-id').value;
+  const company = loadCompanies().find(c => c.login === login && c.password === password);
+  if(!company){ state.companyError='Wrong company login or password.'; render(); return; }
+  if(company.status !== 'approved'){ state.companyError='Your company account is still pending admin approval.'; render(); return; }
+  state.companySession = company; state.companyError=''; state.companyNotice=null; state.screen='companyDashboard'; render();
+}
+function companyDashboardScreen(){
+  const company = state.companySession;
+  if(!company) return loginScreen();
+  const vehicles = loadVehicles().filter(v => v.companyId === company.id);
+  const approved = vehicles.filter(v => v.status === 'approved');
+  const pending = vehicles.filter(v => v.status === 'pending');
+  const rejected = vehicles.filter(v => v.status === 'rejected');
+  const todayBookings = loadBookings().filter(b => b.companyId === company.id && b.dateISO === todayISO() && ['booked','checked_in','fueling'].includes(b.status));
+  return `
+  <button class="back-link" onclick="goLogin()">← Back</button>
+  <div class="admin-grid">
+    <div class="panel">
+      <h2>Company dashboard</h2>
+      <p class="sub">${escapeHTML(company.name)}</p>
+      <div class="stat-line"><span>Company email</span><strong>${escapeHTML(company.email)}</strong></div>
+      <div class="stat-line"><span>Mobile number</span><strong>${escapeHTML(company.mobile)}</strong></div>
+      <div class="stat-line"><span>Approval status</span><strong>${escapeHTML(company.status)}</strong></div>
+      <div class="stat-line"><span>Daily booking limit</span><strong>2 cars/day</strong></div>
+      <div class="stat-line"><span>Cars registered</span><strong>${vehicles.length}</strong></div>
+      <div class="stat-line"><span>Cars approved</span><strong>${approved.length}</strong></div>
+      <div class="stat-line"><span>Cars pending</span><strong>${pending.length}</strong></div>
+      <div class="stat-line"><span>Cars rejected</span><strong>${rejected.length}</strong></div>
+    </div>
+    <div class="panel">
+      <h2>Company actions</h2>
+      <button class="btn btn-primary" onclick="goCompanyCars()">Add / view cars</button>
+      <button class="btn btn-secondary" onclick="goBookingFlowForCompany()" style="margin-top:10px">Book a slot</button>
+      <button class="btn btn-secondary" onclick="viewCompanyBookings()" style="margin-top:10px">View today's bookings</button>
+      <button class="btn btn-secondary" onclick="viewCompanyHistory()" style="margin-top:10px">View booking history</button>
+    </div>
+    <div class="panel">
+      <h2>Today's company bookings</h2>
+      <div class="admin-list">${todayBookings.length ? todayBookings.map(companyBookingRow).join('') : '<div class="hint">No bookings today.</div>'}</div>
+    </div>
+  </div>`;
+}
+function companyCarsScreen(){
+  const company = state.companySession;
+  if(!company) return loginScreen();
+  const vehicles = loadVehicles().filter(v => v.companyId === company.id);
+  return `
+  <button class="back-link" onclick="goCompanyDashboard()">← Back</button>
+  <div class="admin-grid">
+    <div class="panel">
+      <h2>Add new car</h2>
+      <div class="field"><label>Vehicle / car number</label><input type="text" id="new-car-number" placeholder="e.g. ABC-123"></div>
+      <div class="field"><label>Vehicle model</label><input type="text" id="new-car-model" placeholder="e.g. Toyota"></div>
+      <button class="btn btn-primary" onclick="addCompanyVehicle()">Register car</button>
+      ${state.companyError ? `<div class="error-box" style="margin-top:10px">${state.companyError}</div>` : ''}
+      ${state.companyNotice ? `<div class="info-box wait" style="margin-top:10px">${state.companyNotice}</div>` : ''}
+    </div>
+    <div class="panel">
+      <h2>My cars</h2>
+      <div class="admin-list">${vehicles.length ? vehicles.map(companyVehicleRow).join('') : '<div class="hint">No cars registered yet.</div>'}</div>
+    </div>
+  </div>`;
+}
+function addCompanyVehicle(){
+  const company = state.companySession;
+  if(!company) return;
+  const number = document.getElementById('new-car-number').value.trim();
+  const model = document.getElementById('new-car-model').value.trim();
+  if(!number){ state.companyError='Enter a vehicle number.'; render(); return; }
+  const vehicles = loadVehicles();
+  if(vehicles.some(v => v.companyId === company.id && v.number.toLowerCase() === number.toLowerCase())){ state.companyError='That vehicle number is already registered for this company.'; render(); return; }
+  vehicles.push({ id:'vh_'+Date.now()+'_'+Math.random().toString(36).slice(2,6), companyId:company.id, number, model, status:'pending', createdAt:new Date().toISOString() });
+  saveVehicles(vehicles);
+  state.companyError=''; state.companyNotice='The vehicle has been registered and is pending admin approval.'; render();
+}
+function companyVehicleRow(v){
+  return `<div class="admin-row"><div><strong>${escapeHTML(v.number)}</strong><div class="admin-meta">${escapeHTML(v.model||'No model')}${v.status ? ' · '+escapeHTML(v.status) : ''}</div></div></div>`;
+}
+function companyBookingSummaryRow(c){
+  const count = companyTodayBookingCount(c.id, todayISO());
+  return `<div class="admin-row"><div><strong>${escapeHTML(c.name)}</strong><div class="admin-meta">${escapeHTML(c.status||'pending')} · ${count}/2 cars booked today</div></div></div>`;
+}
+function companyBookingRow(b){
+  return `<div class="admin-row"><div><strong>${escapeHTML(b.time)} · ${escapeHTML(b.carNo)}</strong><div class="admin-meta">${escapeHTML(b.status||'booked')} · ${escapeHTML(b.id)}</div></div></div>`;
+}
+function goBookingFlowForCompany(){
+  const company = state.companySession;
+  if(!company) return;
+  state.role='company';
+  state.bookingForm = { name: company.name, mobile: company.mobile, email: company.email, carNo:'', dateISO:null, time:null };
+  state.screen='booking';
+  render();
+}
+function companyTodayBookingCount(companyId, dateISO){
+  return loadBookings().filter(b => b.companyId === companyId && b.dateISO === dateISO && ['booked','checked_in','fueling'].includes(b.status || 'booked')).length;
+}
+function viewCompanyBookings(){
+  const company = state.companySession; if(!company) return; state.companyNotice = 'Viewing today\'s bookings for your company.'; render(); }
+function viewCompanyHistory(){
+  const company = state.companySession; if(!company) return; state.companyNotice = 'Booking history is available from the admin reports.'; render(); }
 
 function adminScreen(){
   state.config = loadConfig(); state.bookings = loadBookings();
@@ -767,6 +952,10 @@ function renderOperatorSearch(){
 function adminScreen(){
   state.config = loadConfig(); state.bookings = loadBookings();
   const owners = loadOwners();
+  const companies = loadCompanies();
+  const vehicles = loadVehicles();
+  const pendingCompanies = companies.filter(c => (c.status||'approved') === 'pending');
+  const pendingVehicles = vehicles.filter(v => (v.status||'approved') === 'pending');
   const pending = owners.filter(o => (o.status||'approved') === 'pending');
   const approved = owners.filter(o => (o.status||'approved') === 'approved');
   const allBookings = loadBookings().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
@@ -775,7 +964,6 @@ function adminScreen(){
   const completed = completedBookings();
   const limits = state.config.weeklyLimits || {private:1, company:1};
   const settings = state.config.bookingSettings || {};
-  const periods = state.config.slotPeriods || {};
   const maintenance = state.config.maintenance || {active:false, message:'Station is currently under maintenance. Booking is temporarily unavailable.'};
   const operators = staffOperators();
   return `
@@ -791,13 +979,16 @@ function adminScreen(){
     </div>
     <div class="panel">
       <h2>Slot Management</h2>
-      <p class="sub">Set booking limits and block specific time slots.</p>
+      <p class="sub">Set the shared daily booking schedule and block specific time slots.</p>
       <div class="mini-fields">
         <div class="field"><label>Private weekly limit</label><input type="number" id="admin-private-limit" min="1" value="${escapeAttr(limits.private||1)}"></div>
         <div class="field"><label>Company weekly limit</label><input type="number" id="admin-company-limit" min="1" value="${escapeAttr(limits.company||1)}"></div>
-        <div class="field"><label>Total daily limit</label><input type="number" id="admin-total-daily-limit" min="1" value="${escapeAttr(state.config.totalDailyLimit||30)}"></div>
-        <div class="field"><label>Morning limit</label><input type="number" id="admin-morning-limit" min="0" value="${escapeAttr(periods.morningLimit||0)}"></div>
-        <div class="field"><label>Afternoon limit</label><input type="number" id="admin-afternoon-limit" min="0" value="${escapeAttr(periods.afternoonLimit||0)}"></div>
+        <div class="field"><label>Daily slot cap</label><input type="number" id="admin-total-daily-limit" min="1" value="${escapeAttr(state.config.totalDailyLimit||11)}"></div>
+        <div class="field"><label>Total slots/day</label><input type="number" id="admin-total-slots" min="1" value="${escapeAttr((state.config.slotConfig&&state.config.slotConfig.totalDailySlots)||11)}"></div>
+        <div class="field"><label>Private slots/day</label><input type="number" id="admin-private-slots" min="1" value="${escapeAttr((state.config.slotConfig&&state.config.slotConfig.privateSlotsPerDay)||5)}"></div>
+        <div class="field"><label>Company slots/day</label><input type="number" id="admin-company-slots" min="1" value="${escapeAttr((state.config.slotConfig&&state.config.slotConfig.companySlotsPerDay)||6)}"></div>
+        <div class="field"><label>Start time</label><input type="time" id="admin-slot-start" value="${escapeAttr((state.config.slotConfig&&state.config.slotConfig.startTime)||'09:00')}"></div>
+        <div class="field"><label>Interval (min)</label><input type="number" id="admin-slot-interval" min="30" step="30" value="${escapeAttr((state.config.slotConfig&&state.config.slotConfig.intervalMinutes)||30)}"></div>
       </div>
       ${WEEKDAYS.map(day => `<div class="field"><label>${day} disabled times</label><input type="text" id="blocked-${day}" placeholder="09:00, 14:00" value="${escapeAttr((state.config[day]&&state.config[day].blocked)||'')}"></div>`).join('')}
       <button class="btn btn-primary" onclick="saveAdminSettings()">Save Settings</button>
@@ -819,6 +1010,21 @@ function adminScreen(){
         <div class="field"><label>Booking cutoff time</label><input type="time" id="admin-cutoff-time" value="${escapeAttr(settings.cutoffTime||'18:00')}"></div>
       </div>
       <button class="btn btn-primary" onclick="saveAdminSettings()">Save Time Settings</button>
+    </div>
+    <div class="panel">
+      <h2>Company Approvals</h2>
+      <p class="sub">Pending companies wait here before they can log in.</p>
+      <div class="admin-list">${pendingCompanies.length ? pendingCompanies.map(companyApprovalRow).join('') : '<div class="hint">No pending companies.</div>'}</div>
+    </div>
+    <div class="panel">
+      <h2>Car Approvals</h2>
+      <p class="sub">Each company vehicle needs approval before it can book.</p>
+      <div class="admin-list">${pendingVehicles.length ? pendingVehicles.map(vehicleApprovalRow).join('') : '<div class="hint">No pending vehicles.</div>'}</div>
+    </div>
+    <div class="panel">
+      <h2>Company Booking Management</h2>
+      <p class="sub">Today's company booking counts and daily limits.</p>
+      <div class="admin-list">${companies.length ? companies.map(companyBookingSummaryRow).join('') : '<div class="hint">No companies registered.</div>'}</div>
     </div>
     <div class="panel">
       <h2>Pending Approvals</h2>
@@ -854,6 +1060,27 @@ function adminScreen(){
       <button class="btn btn-secondary" onclick="downloadReport('monthly')" style="margin-top:10px">Monthly report</button>
       <button class="btn btn-secondary" onclick="downloadReport('all')" style="margin-top:10px">Booking history</button>
       <button class="btn btn-secondary" onclick="downloadNoShowReport()" style="margin-top:10px">No-show vehicles</button>
+    </div>
+  </div>`;
+}
+function companyApprovalRow(c){
+  return `<div class="admin-row">
+    <div><strong>${escapeHTML(c.name)} <span class="status-pill">${escapeHTML(c.status||'pending')}</span></strong>
+      <div class="admin-meta">${escapeHTML(c.email)} · ${escapeHTML(c.mobile)} · ${escapeHTML(c.login)}</div></div>
+    <div class="admin-actions">
+      <button class="btn btn-primary" onclick="setCompanyStatus('${c.id}','approved')">Approve</button>
+      <button class="btn btn-danger" onclick="setCompanyStatus('${c.id}','rejected')">Reject</button>
+    </div>
+  </div>`;
+}
+function vehicleApprovalRow(v){
+  const company = loadCompanies().find(c=>c.id===v.companyId);
+  return `<div class="admin-row">
+    <div><strong>${escapeHTML(v.number)} <span class="status-pill">${escapeHTML(v.status||'pending')}</span></strong>
+      <div class="admin-meta">${escapeHTML(company ? company.name : 'Unknown company')} · ${escapeHTML(v.model||'No model')}</div></div>
+    <div class="admin-actions">
+      <button class="btn btn-primary" onclick="setVehicleStatus('${v.id}','approved')">Approve</button>
+      <button class="btn btn-danger" onclick="setVehicleStatus('${v.id}','rejected')">Reject</button>
     </div>
   </div>`;
 }
@@ -925,6 +1152,22 @@ function setOwnerStatus(id,status){
   if(!o) return;
   o.status = status; o.seenByAdmin = true; o.reviewedAt = new Date().toISOString();
   saveOwners(owners); render();
+}
+function setCompanyStatus(id,status){
+  if(!state.adminAuthed){ alert('Only admin can approve or reject companies.'); return; }
+  const companies = loadCompanies();
+  const company = companies.find(x=>x.id===id);
+  if(!company) return;
+  company.status = status; company.reviewedAt = new Date().toISOString();
+  saveCompanies(companies); render();
+}
+function setVehicleStatus(id,status){
+  if(!state.adminAuthed){ alert('Only admin can approve or reject vehicles.'); return; }
+  const vehicles = loadVehicles();
+  const vehicle = vehicles.find(x=>x.id===id);
+  if(!vehicle) return;
+  vehicle.status = status; vehicle.reviewedAt = new Date().toISOString();
+  saveVehicles(vehicles); render();
 }
 function cancelBooking(id){
   if(!confirm('Cancel this booking?')) return;
@@ -1103,7 +1346,7 @@ function bookingScreen(){
     const wd = weekdayNameOf(d);
     const dateISO = isoOf(d);
     const total = dayTotalCapacity(wd, role);
-    const bookedCount = bookingsForDateRole(dateISO, role).length;
+    const bookedCount = bookingsForDate(dateISO).length;
     const remaining = total - bookedCount;
     const isPast = d < today;
     const isFull = remaining <= 0 || dailyLimitReached(dateISO);
@@ -1127,7 +1370,7 @@ function bookingScreen(){
     const wd = weekdayNameOf(new Date(dateISO));
     const slots = slotsForRoleDay(wd, role);
     const chips = slots.map(t=>{
-      const remaining = capacityAt(wd, role, t) - bookingsForSlot(dateISO, role, t).length;
+      const remaining = capacityAt(wd, role, t) - bookingsForSlot(dateISO, t).length;
       const unavailable = remaining<=0 || dailyLimitReached(dateISO) || periodLimitReached(dateISO,t) || !withinBookingWindow(dateISO,t);
       const selected = state.bookingForm.time === t;
       const cls = ['hour-chip', selected?'selected':'', unavailable?'unavailable':''].join(' ').trim();
@@ -1176,6 +1419,14 @@ function confirmBooking(){
   }
   const weekKey = weekKeyFor(new Date(dateISO));
   const limit = weeklyLimitFor(state.role);
+  if(state.role === 'company'){ 
+    const company = loadCompanies().find(c => c.mobile === mobile || c.email === email || c.name === name);
+    if(company && company.status !== 'approved'){ state.bookingError='Your company account is not approved yet.'; render(); return; }
+    const approvedVehicle = loadVehicles().find(v => v.companyId === company?.id && v.number.toLowerCase() === carNo.toLowerCase() && v.status === 'approved');
+    if(!approvedVehicle){ state.bookingError='Only approved company vehicles can make bookings. Please register and wait for approval for this car.'; render(); return; }
+    const companyBookingsToday = loadBookings().filter(b => b.companyId === company?.id && b.dateISO === dateISO && ['booked','checked_in','fueling'].includes(b.status || 'booked'));
+    if(company && companyBookingsToday.length >= 2){ state.bookingError='This company has already reached the daily limit of 2 bookings for today.'; render(); return; }
+  }
   if(bookingsThisWeekForCar(mobile, carNo, weekKey).length >= limit){
     state.bookingError = `This car has reached its weekly limit of ${limit} booking${limit>1?'s':''}. Please try again next week.`;
     render(); return;
@@ -1185,10 +1436,12 @@ function confirmBooking(){
   if(periodLimitReached(dateISO,time)){ state.bookingError='That morning/afternoon period is full. Please pick another time.'; render(); return; }
   if(!withinBookingWindow(dateISO,time)){ state.bookingError='That time is outside the current station booking hours. Please pick another time.'; render(); return; }
   if(!slotsForRoleDay(wd, state.role).includes(time)){ state.bookingError='That time is no longer available. Please pick another time.'; render(); return; }
-  if(bookingsForSlot(dateISO, state.role, time).length >= capacityAt(wd, state.role, time)){ state.bookingError='That time just filled up — please pick another time.'; render(); return; }
+  if(bookingsForSlot(dateISO, time).length >= capacityAt(wd, state.role, time)){ state.bookingError='That time just filled up — please pick another time.'; render(); return; }
+  const company = state.role === 'company' ? loadCompanies().find(c => c.mobile === mobile || c.email === email || c.name === name) : null;
   const booking = {
     id: 'bk_'+Date.now()+'_'+Math.random().toString(36).slice(2,7),
     role: state.role, name, mobile, email, carNo,
+    companyId: company ? company.id : null,
     dateISO, weekday: wd, weekKey, time,
     status:'booked', adminComment:'', history:[],
     createdAt: new Date().toISOString(),
@@ -1382,8 +1635,11 @@ function customizePanel(){
     const privateLimitEl = document.getElementById("admin-private-limit");
     const companyLimitEl = document.getElementById("admin-company-limit");
     const totalDailyEl = document.getElementById("admin-total-daily-limit");
-    const morningLimitEl = document.getElementById("admin-morning-limit");
-    const afternoonLimitEl = document.getElementById("admin-afternoon-limit");
+    const totalSlotsEl = document.getElementById("admin-total-slots");
+    const privateSlotsEl = document.getElementById("admin-private-slots");
+    const companySlotsEl = document.getElementById("admin-company-slots");
+    const slotStartEl = document.getElementById("admin-slot-start");
+    const slotIntervalEl = document.getElementById("admin-slot-interval");
     const messageEl = document.getElementById("maintenance-message");
     const webhookEl = document.getElementById("admin-webhook-url");
     const adminEmailEl = document.getElementById("admin-email");
@@ -1407,11 +1663,13 @@ function customizePanel(){
       if(email){ localStorage.setItem(LS_ADMIN_EMAIL, email); } else { localStorage.removeItem(LS_ADMIN_EMAIL); }
     }
     if(totalDailyEl) cfg.totalDailyLimit = Math.max(1, parseInt(totalDailyEl.value, 10) || 1);
-    if(morningLimitEl || afternoonLimitEl){
-      cfg.slotPeriods = cfg.slotPeriods || {};
-      if(morningLimitEl) cfg.slotPeriods.morningLimit = Math.max(0, parseInt(morningLimitEl.value, 10) || 0);
-      if(afternoonLimitEl) cfg.slotPeriods.afternoonLimit = Math.max(0, parseInt(afternoonLimitEl.value, 10) || 0);
-    }
+    cfg.slotConfig = cfg.slotConfig || {};
+    if(totalSlotsEl) cfg.slotConfig.totalDailySlots = Math.max(1, parseInt(totalSlotsEl.value, 10) || 1);
+    if(privateSlotsEl) cfg.slotConfig.privateSlotsPerDay = Math.max(1, parseInt(privateSlotsEl.value, 10) || 1);
+    if(companySlotsEl) cfg.slotConfig.companySlotsPerDay = Math.max(1, parseInt(companySlotsEl.value, 10) || 1);
+    if(slotStartEl) cfg.slotConfig.startTime = slotStartEl.value || '09:00';
+    if(slotIntervalEl) cfg.slotConfig.intervalMinutes = Math.max(30, parseInt(slotIntervalEl.value, 10) || 30);
+    cfg.slotPeriods = cfg.slotPeriods || {};
     if(openingEl || closingEl || advanceEl || cutoffEl){
       cfg.bookingSettings = cfg.bookingSettings || {};
       if(openingEl) cfg.bookingSettings.openingTime = openingEl.value || '08:00';
